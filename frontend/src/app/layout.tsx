@@ -7,6 +7,9 @@ import Sidebar from '@/components/Sidebar';
 export const metadata: Metadata = {
   title: 'Route 53 - Scaler Labs Assignment',
   description: 'High-fidelity AWS Route53 Clone with FastAPI, SQLite, and Next.js',
+  icons: {
+    icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><circle cx="50" cy="50" r="50" fill="%23232f3e"/><text y="62" font-size="34" font-weight="900" font-family="sans-serif" x="16" fill="%23ec7211">AWS</text></svg>',
+  },
 };
 
 export default function RootLayout({
