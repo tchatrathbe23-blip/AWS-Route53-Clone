@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: route53-backend
+    env: python
+    buildCommand: pip install -r requirements.txt && python seed_data.py
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
