@@ -55,9 +55,10 @@ def list_hosted_zones(
         query = query.filter(HostedZone.type == type)
     
     zones = query.offset(skip).limit(limit).all()
-    # update actual record counts
+    # update actual record counts dynamically
     for z in zones:
-        z.record_count = db.query(DnsRecord).filter(DnsRecord.hosted_zone_id == z.id).count()
+        count = db.query(DnsRecord).filter(DnsRecord.hosted_zone_id == z.id).count()
+        setattr(z, 'record_count', count)
     return zones
 
 @router.post("", response_model=HostedZoneOut, status_code=status.HTTP_201_CREATED)
