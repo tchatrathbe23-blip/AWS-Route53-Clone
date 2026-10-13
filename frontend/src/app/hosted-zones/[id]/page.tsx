@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState, useRef } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import NotificationBanner, { AlertNotification } from '@/components/NotificationBanner';
 import Modal from '@/components/Modal';
@@ -10,16 +10,23 @@ import { HostedZoneDetail, DnsRecord } from '@/lib/types';
 import { 
   Plus, Search, RefreshCw, Trash2, Edit2, 
   Upload, Download, CheckSquare, Square, 
-  ChevronLeft, ChevronRight, Info, AlertTriangle, ArrowLeft 
+  ChevronLeft, ChevronRight, ArrowUpDown, Info 
 } from 'lucide-react';
 
+// ==========================================================
+// SUPPORTED DNS RECORD TYPES
+// If interviewer asks to add a type (e.g. HTTPS, ALIAS, SPF), simply add it here
+// ==========================================================
 const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'TXT', 'MX', 'NS', 'PTR', 'SRV', 'CAA'];
 
 export default function HostedZoneDetailPage() {
+  // Read dynamic zone ID from URL (/hosted-zones/[id])
   const params = useParams();
-  const router = useRouter();
   const zoneId = params.id as string;
 
+  // ==========================================================
+  // STATE MANAGEMENT
+  // ==========================================================
   const [zone, setZone] = useState<HostedZoneDetail | null>(null);
   const [records, setRecords] = useState<DnsRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,18 +35,22 @@ export default function HostedZoneDetailPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [notification, setNotification] = useState<AlertNotification | null>(null);
 
-  // Pagination
+  // Pagination & Dynamic Rows-Per-Page
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+  const [itemsPerPage, setItemsPerPage] = useState(10);
 
-  // Modals
+  // Client-Side Column Sorting (Name, Type, TTL)
+  const [sortField, setSortField] = useState<'name' | 'type' | 'ttl'>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  // Modal Visibility States
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<DnsRecord | null>(null);
 
-  // Record Form States
+  // Form Fields for Record Creation & Editing
   const [recordName, setRecordName] = useState('');
   const [recordType, setRecordType] = useState('A');
   const [ttl, setTtl] = useState(300);
@@ -47,16 +58,21 @@ export default function HostedZoneDetailPage() {
   const [recordValues, setRecordValues] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
 
-  // File Upload Ref
+  // File Upload Reference for BIND Zone Import
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // ==========================================================
+  // DATA FETCHING
+  // ==========================================================
   const fetchZoneData = async () => {
+    if (!zoneId) return;
     setLoading(true);
     try {
       const zoneData = await ApiClient.getHostedZone(zoneId);
       setZone(zoneData);
       const recs = await ApiClient.getZoneRecords(zoneId, searchQuery, typeFilter);
       setRecords(recs);
+      setSelectedIds([]);
     } catch (err: any) {
       setNotification({ type: 'error', message: err.message || 'Failed to fetch hosted zone' });
     } finally {
@@ -68,15 +84,32 @@ export default function HostedZoneDetailPage() {
     if (zoneId) fetchZoneData();
   }, [zoneId, typeFilter]);
 
-  // Keyboard shortcut listener ('c' create, '/' search)
+  // Reset page to 1 when searching or filtering
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, typeFilter]);
+
+  // ==========================================================
+  // KEYBOARD SHORTCUTS
+  // '/' = Focus Search Bar | 'c' / 'C' = Open Create Record Modal
+  // ==========================================================
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (
+        e.target instanceof HTMLInputElement || 
+        e.target instanceof HTMLTextAreaElement || 
+        e.target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
 
       if (e.key === 'c' || e.key === 'C') {
         e.preventDefault();
         setRecordName('');
         setRecordValues('');
+        setRecordType('A');
+        setTtl(300);
+        setRoutingPolicy('Simple');
         setCreateModalOpen(true);
       } else if (e.key === '/') {
         e.preventDefault();
@@ -87,8 +120,12 @@ export default function HostedZoneDetailPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // ==========================================================
+  // EVENT HANDLERS
+  // ==========================================================
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setCurrentPage(1);
     fetchZoneData();
   };
 
@@ -108,18 +145,29 @@ export default function HostedZoneDetailPage() {
     }
   };
 
+  const handleSort = (field: 'name' | 'type' | 'ttl') => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  // CREATE RECORD: Validates input and submits to backend
   const handleCreateRecord = async (e: React.FormEvent) => {
     e.preventDefault();
-    setActionLoading(true);
+    if (!recordValues.trim()) {
+      setNotification({ type: 'error', message: 'At least one record value is required.' });
+      return;
+    }
 
-    const values = recordValues
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean);
+    setActionLoading(true);
+    const values = recordValues.split('\n').map((s) => s.trim()).filter(Boolean);
 
     try {
       await ApiClient.createRecord(zoneId, {
-        name: recordName,
+        name: recordName.trim(),
         type: recordType,
         ttl: Number(ttl),
         routing_policy: routingPolicy,
@@ -130,6 +178,7 @@ export default function HostedZoneDetailPage() {
       setCreateModalOpen(false);
       setRecordName('');
       setRecordValues('');
+      setTtl(300);
       fetchZoneData();
     } catch (err: any) {
       setNotification({ type: 'error', message: err.message || 'Failed to create record' });
@@ -138,15 +187,17 @@ export default function HostedZoneDetailPage() {
     }
   };
 
+  // EDIT RECORD: Updates existing record values/TTL
   const handleEditRecord = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingRecord) return;
-    setActionLoading(true);
+    if (!recordValues.trim()) {
+      setNotification({ type: 'error', message: 'Record values cannot be empty.' });
+      return;
+    }
 
-    const values = recordValues
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean);
+    setActionLoading(true);
+    const values = recordValues.split('\n').map((s) => s.trim()).filter(Boolean);
 
     try {
       await ApiClient.updateRecord(editingRecord.id, {
@@ -165,12 +216,27 @@ export default function HostedZoneDetailPage() {
     }
   };
 
+  // DELETE RECORDS: Prevents accidental deletion of root NS/SOA, then bulk deletes
   const handleDeleteSelected = async () => {
     if (selectedIds.length === 0) return;
+
+    // Safety: Protect authoritative Zone NS & SOA records from accidental deletion
+    const protectedRecords = records.filter(
+      (r) => selectedIds.includes(r.id) && (r.type === 'NS' || r.type === 'SOA') && r.name === zone?.name
+    );
+
+    if (protectedRecords.length > 0) {
+      setNotification({
+        type: 'error',
+        message: 'Default authoritative NS and SOA records cannot be deleted.',
+      });
+      return;
+    }
+
     setActionLoading(true);
     try {
       await ApiClient.bulkDeleteRecords(selectedIds);
-      setNotification({ type: 'success', message: `Deleted ${selectedIds.length} record(s)` });
+      setNotification({ type: 'success', message: `Successfully deleted ${selectedIds.length} record(s)` });
       setSelectedIds([]);
       setDeleteModalOpen(false);
       fetchZoneData();
@@ -181,16 +247,21 @@ export default function HostedZoneDetailPage() {
     }
   };
 
+  // IMPORT BIND ZONE: Parses standard RFC 1035 zone file (.zone, .txt, .bind)
   const handleImportBind = async (e: React.FormEvent) => {
     e.preventDefault();
     const file = fileInputRef.current?.files?.[0];
-    if (!file) return;
+    if (!file) {
+      setNotification({ type: 'error', message: 'Please select a BIND zone file to upload.' });
+      return;
+    }
 
     setActionLoading(true);
     try {
       const res = await ApiClient.importBindFile(zoneId, file);
       setNotification({ type: 'success', message: res.message });
       setImportModalOpen(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
       fetchZoneData();
     } catch (err: any) {
       setNotification({ type: 'error', message: err.message || 'Failed to import zone file' });
@@ -199,15 +270,28 @@ export default function HostedZoneDetailPage() {
     }
   };
 
-  const filteredRecords = records;
-  const totalPages = Math.ceil(filteredRecords.length / itemsPerPage) || 1;
-  const paginatedRecords = filteredRecords.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  // ==========================================================
+  // SORTING & PAGINATION (Sort First -> Paginate Second)
+  // ==========================================================
+  const sortedRecords = [...records].sort((a, b) => {
+    let cmp = 0;
+    if (sortField === 'name') cmp = a.name.localeCompare(b.name);
+    if (sortField === 'type') cmp = a.type.localeCompare(b.type);
+    if (sortField === 'ttl') cmp = a.ttl - b.ttl;
+    return sortDirection === 'asc' ? cmp : -cmp;
+  });
 
+  const totalPages = Math.max(1, Math.ceil(sortedRecords.length / itemsPerPage));
+  const paginatedRecords = sortedRecords.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  // ==========================================================
+  // RENDER UI
+  // ==========================================================
   return (
     <div>
       <NotificationBanner notification={notification} onClose={() => setNotification(null)} />
 
-      {/* Zone Details Summary Card */}
+      {/* Header & Zone Details */}
       <div className="mb-6">
         <PageHeader
           breadcrumbs={[
@@ -247,7 +331,7 @@ export default function HostedZoneDetailPage() {
           }
         />
 
-        {/* Zone metadata banner */}
+        {/* Zone Metadata Summary Banner */}
         <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-md p-4 text-xs grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div>
             <span className="text-gray-500 dark:text-gray-400 block font-medium">Zone ID</span>
@@ -268,9 +352,9 @@ export default function HostedZoneDetailPage() {
         </div>
       </div>
 
-      {/* Records Table Card */}
+      {/* Cloudscape Records Table Card */}
       <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-md shadow-sm overflow-hidden">
-        {/* Table Actions Header */}
+        {/* Table Controls */}
         <div className="p-3.5 border-b border-gray-200 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-gray-50/50 dark:bg-slate-900/50">
           <form onSubmit={handleSearchSubmit} className="flex items-center space-x-2 flex-1 max-w-md">
             <div className="relative w-full">
@@ -278,7 +362,7 @@ export default function HostedZoneDetailPage() {
               <input
                 id="record-search-input"
                 type="text"
-                placeholder="Search records by name..."
+                placeholder="Search records by name... (Press '/' to search)"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-9 pr-3 py-1.5 text-xs bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded focus:border-aws-blue focus:outline-none"
@@ -300,9 +384,7 @@ export default function HostedZoneDetailPage() {
             >
               <option value="">All record types</option>
               {RECORD_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
+                <option key={t} value={t}>{t}</option>
               ))}
             </select>
 
@@ -338,6 +420,9 @@ export default function HostedZoneDetailPage() {
               onClick={() => {
                 setRecordName('');
                 setRecordValues('');
+                setRecordType('A');
+                setTtl(300);
+                setRoutingPolicy('Simple');
                 setCreateModalOpen(true);
               }}
               className="px-3.5 py-1.5 text-xs font-semibold bg-aws-orange hover:bg-aws-orangeHover text-white rounded shadow-sm transition flex items-center space-x-1.5"
@@ -362,11 +447,26 @@ export default function HostedZoneDetailPage() {
                     )}
                   </button>
                 </th>
-                <th className="p-3">Record name</th>
-                <th className="p-3">Type</th>
+                <th className="p-3 cursor-pointer hover:text-aws-blue" onClick={() => handleSort('name')}>
+                  <div className="flex items-center space-x-1">
+                    <span>Record name</span>
+                    <ArrowUpDown className="w-3 h-3 text-gray-400" />
+                  </div>
+                </th>
+                <th className="p-3 cursor-pointer hover:text-aws-blue" onClick={() => handleSort('type')}>
+                  <div className="flex items-center space-x-1">
+                    <span>Type</span>
+                    <ArrowUpDown className="w-3 h-3 text-gray-400" />
+                  </div>
+                </th>
                 <th className="p-3">Routing policy</th>
-                <th className="p-3">TTL (seconds)</th>
-                <th className="p-3">Value/Route traffic to</th>
+                <th className="p-3 cursor-pointer hover:text-aws-blue" onClick={() => handleSort('ttl')}>
+                  <div className="flex items-center space-x-1">
+                    <span>TTL (seconds)</span>
+                    <ArrowUpDown className="w-3 h-3 text-gray-400" />
+                  </div>
+                </th>
+                <th className="p-3">Value / Route traffic to</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
@@ -388,7 +488,6 @@ export default function HostedZoneDetailPage() {
               ) : (
                 paginatedRecords.map((r) => {
                   const isSelected = selectedIds.includes(r.id);
-                  const isProtected = (r.type === 'NS' || r.type === 'SOA') && r.name === zone?.name;
                   return (
                     <tr
                       key={r.id}
@@ -397,10 +496,7 @@ export default function HostedZoneDetailPage() {
                       }`}
                     >
                       <td className="p-3 text-center">
-                        <button
-                          onClick={() => toggleSelectRecord(r.id)}
-                          className="text-gray-400 hover:text-gray-600"
-                        >
+                        <button onClick={() => toggleSelectRecord(r.id)} className="text-gray-400 hover:text-gray-600">
                           {isSelected ? (
                             <CheckSquare className="w-4 h-4 text-aws-blue" />
                           ) : (
@@ -408,19 +504,13 @@ export default function HostedZoneDetailPage() {
                           )}
                         </button>
                       </td>
-                      <td className="p-3 font-semibold text-gray-900 dark:text-gray-100">
-                        {r.name}
-                      </td>
-                      <td className="p-3 font-mono font-medium text-aws-blue dark:text-blue-400">
-                        {r.type}
-                      </td>
+                      <td className="p-3 font-semibold text-gray-900 dark:text-gray-100">{r.name}</td>
+                      <td className="p-3 font-mono font-medium text-aws-blue dark:text-blue-400">{r.type}</td>
                       <td className="p-3 text-gray-600 dark:text-gray-400">{r.routing_policy}</td>
                       <td className="p-3 font-mono">{r.ttl}</td>
                       <td className="p-3 text-gray-700 dark:text-gray-300 font-mono text-[11px] max-w-md">
                         {r.records.map((val, idx) => (
-                          <div key={idx} className="truncate">
-                            {val}
-                          </div>
+                          <div key={idx} className="truncate">{val}</div>
                         ))}
                       </td>
                     </tr>
@@ -431,12 +521,31 @@ export default function HostedZoneDetailPage() {
           </table>
         </div>
 
-        {/* Pagination Footer */}
-        <div className="p-3 border-t border-gray-200 dark:border-slate-800 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-          <div>
-            Showing {filteredRecords.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} to{' '}
-            {Math.min(currentPage * itemsPerPage, filteredRecords.length)} of {filteredRecords.length} records
+        {/* Pagination & Rows-Per-Page Controls */}
+        <div className="p-3 border-t border-gray-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-gray-500 dark:text-gray-400">
+          <div className="flex items-center space-x-3">
+            <span>
+              Showing {sortedRecords.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} to{' '}
+              {Math.min(currentPage * itemsPerPage, sortedRecords.length)} of {sortedRecords.length} records
+            </span>
+            <div className="flex items-center space-x-1">
+              <span>Rows per page:</span>
+              <select
+                value={itemsPerPage}
+                onChange={(e) => {
+                  setItemsPerPage(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="px-1.5 py-0.5 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded text-xs"
+              >
+                <option value={5}>5</option>
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+              </select>
+            </div>
           </div>
+
           <div className="flex items-center space-x-1">
             <button
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
@@ -459,14 +568,12 @@ export default function HostedZoneDetailPage() {
         </div>
       </div>
 
-      {/* Modal: Create Record */}
+      {/* MODAL 1: Create Record */}
       <Modal isOpen={createModalOpen} onClose={() => setCreateModalOpen(false)} title="Create record" maxWidth="max-w-2xl">
         <form onSubmit={handleCreateRecord} className="space-y-4 text-xs">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Record name
-              </label>
+              <label className="block font-medium text-gray-700 dark:text-gray-300 mb-1">Record name</label>
               <div className="flex">
                 <input
                   type="text"
@@ -489,9 +596,7 @@ export default function HostedZoneDetailPage() {
                 className="w-full px-3 py-2 bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded focus:border-aws-orange focus:outline-none"
               >
                 {RECORD_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {t} - {getRecordTypeDescription(t)}
-                  </option>
+                  <option key={t} value={t}>{t} - {getRecordTypeDescription(t)}</option>
                 ))}
               </select>
             </div>
@@ -537,7 +642,7 @@ export default function HostedZoneDetailPage() {
               onChange={(e) => setRecordValues(e.target.value)}
               className="w-full font-mono text-xs px-3 py-2 bg-gray-50 dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded focus:border-aws-orange focus:outline-none"
             />
-            <p className="text-[11px] text-gray-500 mt-1">Enter each value on a new line.</p>
+            <p className="text-[11px] text-gray-500 mt-1">Enter each record value on a new line.</p>
           </div>
 
           <div className="flex justify-end space-x-2 pt-4 border-t border-gray-200 dark:border-slate-800">
@@ -559,7 +664,7 @@ export default function HostedZoneDetailPage() {
         </form>
       </Modal>
 
-      {/* Modal: Edit Record */}
+      {/* MODAL 2: Edit Record */}
       <Modal isOpen={editModalOpen} onClose={() => setEditModalOpen(false)} title="Edit record" maxWidth="max-w-2xl">
         <form onSubmit={handleEditRecord} className="space-y-4 text-xs">
           <div>
@@ -629,7 +734,7 @@ export default function HostedZoneDetailPage() {
         </form>
       </Modal>
 
-      {/* Modal: Confirm Record Deletion */}
+      {/* MODAL 3: Delete Records Confirmation */}
       <Modal isOpen={deleteModalOpen} onClose={() => setDeleteModalOpen(false)} title="Delete record(s)">
         <div className="space-y-4 text-xs">
           <p className="text-gray-600 dark:text-gray-300">
@@ -656,7 +761,7 @@ export default function HostedZoneDetailPage() {
         </div>
       </Modal>
 
-      {/* Modal: Import BIND File */}
+      {/* MODAL 4: Import BIND File */}
       <Modal isOpen={importModalOpen} onClose={() => setImportModalOpen(false)} title="Import DNS records from BIND zone file">
         <form onSubmit={handleImportBind} className="space-y-4 text-xs">
           <p className="text-gray-600 dark:text-gray-400">
@@ -694,6 +799,7 @@ export default function HostedZoneDetailPage() {
   );
 }
 
+// Helpers for tooltips and placeholder formats
 function getRecordTypeDescription(type: string): string {
   switch (type) {
     case 'A': return 'Routes traffic to an IPv4 address';

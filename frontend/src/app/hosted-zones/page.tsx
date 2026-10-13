@@ -14,6 +14,9 @@ import {
 } from 'lucide-react';
 
 export default function HostedZonesPage() {
+  // ==========================================================
+  // STATE MANAGEMENT
+  // ==========================================================
   const [zones, setZones] = useState<HostedZone[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -21,28 +24,37 @@ export default function HostedZonesPage() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [notification, setNotification] = useState<AlertNotification | null>(null);
 
-  // Pagination
+  // Pagination & Dynamic Rows-Per-Page
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
+  const [itemsPerPage, setItemsPerPage] = useState(10);
 
-  // Modals
+  // Client-Side Column Sorting (Name, Record Count, Created Date)
+  const [sortField, setSortField] = useState<'name' | 'record_count' | 'created_at'>('created_at');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+
+  // Modal Dialog Visibility & Active Selected Zone
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [editingZone, setEditingZone] = useState<HostedZone | null>(null);
 
-  // Form states
+  // Form Fields for Create / Edit
   const [domainName, setDomainName] = useState('');
   const [zoneType, setZoneType] = useState('Public hosted zone');
   const [description, setDescription] = useState('');
   const [vpcId, setVpcId] = useState('');
   const [actionLoading, setActionLoading] = useState(false);
 
+  // ==========================================================
+  // DATA FETCHING
+  // ==========================================================
+  // Calls backend API with search text and zone type query parameters
   const fetchZones = async () => {
     setLoading(true);
     try {
       const data = await ApiClient.getHostedZones(searchQuery, typeFilter);
       setZones(data);
+      setSelectedIds([]); // Clear selection when data refreshes
     } catch (err: any) {
       setNotification({ type: 'error', message: err.message || 'Failed to load hosted zones' });
     } finally {
@@ -50,17 +62,36 @@ export default function HostedZonesPage() {
     }
   };
 
+  // Re-fetch whenever type filter dropdown changes
   useEffect(() => {
     fetchZones();
   }, [typeFilter]);
 
-  // Keyboard shortcut listener ('/' for search, 'c' for create)
+  // Reset pagination to page 1 whenever search query changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, typeFilter]);
+
+  // ==========================================================
+  // KEYBOARD SHORTCUTS
+  // '/' = Focus Search Bar | 'c' / 'C' = Open Create Zone Modal
+  // ==========================================================
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      // Ignore shortcuts if the user is currently typing inside an input or textarea
+      if (
+        e.target instanceof HTMLInputElement || 
+        e.target instanceof HTMLTextAreaElement || 
+        e.target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
 
       if (e.key === 'c' || e.key === 'C') {
         e.preventDefault();
+        setDomainName('');
+        setDescription('');
+        setVpcId('');
         setCreateModalOpen(true);
       } else if (e.key === '/') {
         e.preventDefault();
@@ -71,11 +102,16 @@ export default function HostedZonesPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // ==========================================================
+  // EVENT HANDLERS
+  // ==========================================================
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setCurrentPage(1);
     fetchZones();
   };
 
+  // Toggle selection for all visible items on the current page
   const handleSelectAll = () => {
     if (selectedIds.length === paginatedZones.length) {
       setSelectedIds([]);
@@ -84,6 +120,7 @@ export default function HostedZonesPage() {
     }
   };
 
+  // Toggle individual row checkbox
   const toggleSelectZone = (id: string) => {
     if (selectedIds.includes(id)) {
       setSelectedIds(selectedIds.filter((item) => item !== id));
@@ -92,12 +129,27 @@ export default function HostedZonesPage() {
     }
   };
 
+  // Helper to toggle sorting when column header is clicked
+  const handleSort = (field: 'name' | 'record_count' | 'created_at') => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  // CREATE ZONE: Submits new domain to API
   const handleCreateZone = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!domainName.trim()) {
+      setNotification({ type: 'error', message: 'Domain name is required.' });
+      return;
+    }
     setActionLoading(true);
     try {
       const newZone = await ApiClient.createHostedZone({
-        name: domainName,
+        name: domainName.trim(),
         type: zoneType,
         comment: description,
         vpc_id: zoneType.includes('Private') ? vpcId : undefined,
@@ -106,6 +158,7 @@ export default function HostedZonesPage() {
       setCreateModalOpen(false);
       setDomainName('');
       setDescription('');
+      setVpcId('');
       fetchZones();
     } catch (err: any) {
       setNotification({ type: 'error', message: err.message || 'Failed to create hosted zone' });
@@ -114,6 +167,7 @@ export default function HostedZonesPage() {
     }
   };
 
+  // EDIT ZONE: Updates comment/description
   const handleEditZone = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingZone) return;
@@ -130,6 +184,7 @@ export default function HostedZonesPage() {
     }
   };
 
+  // DELETE ZONE: Bulk deletes selected hosted zones
   const handleDeleteSelected = async () => {
     if (selectedIds.length === 0) return;
     setActionLoading(true);
@@ -146,15 +201,30 @@ export default function HostedZonesPage() {
     }
   };
 
-  // Pagination logic
-  const filteredZones = zones;
-  const totalPages = Math.ceil(filteredZones.length / itemsPerPage) || 1;
-  const paginatedZones = filteredZones.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  // ==========================================================
+  // SORTING & PAGINATION CALCULATIONS
+  // Always Sort FIRST -> Paginate SECOND (Standard enterprise pattern)
+  // ==========================================================
+  const sortedZones = [...zones].sort((a, b) => {
+    let cmp = 0;
+    if (sortField === 'name') cmp = a.name.localeCompare(b.name);
+    if (sortField === 'record_count') cmp = a.record_count - b.record_count;
+    if (sortField === 'created_at') cmp = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    return sortDirection === 'asc' ? cmp : -cmp;
+  });
 
+  const totalPages = Math.max(1, Math.ceil(sortedZones.length / itemsPerPage));
+  const paginatedZones = sortedZones.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  // ==========================================================
+  // RENDER UI (Cloudscape Design System)
+  // ==========================================================
   return (
     <div>
+      {/* Alert Notification Toast / Banner */}
       <NotificationBanner notification={notification} onClose={() => setNotification(null)} />
 
+      {/* Page Header with Action Buttons */}
       <PageHeader
         breadcrumbs={[{ label: 'Hosted zones' }]}
         title="Hosted zones"
@@ -198,7 +268,7 @@ export default function HostedZonesPage() {
 
       {/* Cloudscape Table Card */}
       <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-md shadow-sm overflow-hidden">
-        {/* Table Controls / Filters */}
+        {/* Table Controls (Search, Type Filter, Refresh) */}
         <div className="p-3.5 border-b border-gray-200 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-gray-50/50 dark:bg-slate-900/50">
           <form onSubmit={handleSearchSubmit} className="flex items-center space-x-2 flex-1 max-w-md">
             <div className="relative w-full">
@@ -206,7 +276,7 @@ export default function HostedZonesPage() {
               <input
                 id="zone-search-input"
                 type="text"
-                placeholder="Find hosted zones by domain name..."
+                placeholder="Find hosted zones by domain name... (Press '/' to search)"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="w-full pl-9 pr-3 py-1.5 text-xs bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded focus:border-aws-blue focus:outline-none"
@@ -254,12 +324,27 @@ export default function HostedZonesPage() {
                     )}
                   </button>
                 </th>
-                <th className="p-3">Domain name</th>
+                <th className="p-3 cursor-pointer hover:text-aws-blue" onClick={() => handleSort('name')}>
+                  <div className="flex items-center space-x-1">
+                    <span>Domain name</span>
+                    <ArrowUpDown className="w-3 h-3 text-gray-400" />
+                  </div>
+                </th>
                 <th className="p-3">Hosted zone ID</th>
                 <th className="p-3">Type</th>
-                <th className="p-3 text-right">Record count</th>
+                <th className="p-3 text-right cursor-pointer hover:text-aws-blue" onClick={() => handleSort('record_count')}>
+                  <div className="flex items-center justify-end space-x-1">
+                    <span>Record count</span>
+                    <ArrowUpDown className="w-3 h-3 text-gray-400" />
+                  </div>
+                </th>
                 <th className="p-3">Comment / Description</th>
-                <th className="p-3">Created</th>
+                <th className="p-3 cursor-pointer hover:text-aws-blue" onClick={() => handleSort('created_at')}>
+                  <div className="flex items-center space-x-1">
+                    <span>Created</span>
+                    <ArrowUpDown className="w-3 h-3 text-gray-400" />
+                  </div>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
@@ -330,12 +415,31 @@ export default function HostedZonesPage() {
           </table>
         </div>
 
-        {/* Table Footer & Pagination */}
-        <div className="p-3 border-t border-gray-200 dark:border-slate-800 flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-          <div>
-            Showing {filteredZones.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} to{' '}
-            {Math.min(currentPage * itemsPerPage, filteredZones.length)} of {filteredZones.length} hosted zones
+        {/* Table Footer with Pagination Controls & Rows-Per-Page Selector */}
+        <div className="p-3 border-t border-gray-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-gray-500 dark:text-gray-400">
+          <div className="flex items-center space-x-3">
+            <span>
+              Showing {sortedZones.length === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1} to{' '}
+              {Math.min(currentPage * itemsPerPage, sortedZones.length)} of {sortedZones.length} hosted zones
+            </span>
+            <div className="flex items-center space-x-1">
+              <span>Rows per page:</span>
+              <select
+                value={itemsPerPage}
+                onChange={(e) => {
+                  setItemsPerPage(Number(e.target.value));
+                  setCurrentPage(1);
+                }}
+                className="px-1.5 py-0.5 bg-white dark:bg-slate-800 border border-gray-300 dark:border-slate-700 rounded text-xs"
+              >
+                <option value={5}>5</option>
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+              </select>
+            </div>
           </div>
+
           <div className="flex items-center space-x-1">
             <button
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
@@ -358,7 +462,7 @@ export default function HostedZonesPage() {
         </div>
       </div>
 
-      {/* Modal: Create Hosted Zone */}
+      {/* MODAL 1: Create Hosted Zone */}
       <Modal isOpen={createModalOpen} onClose={() => setCreateModalOpen(false)} title="Create hosted zone">
         <form onSubmit={handleCreateZone} className="space-y-4 text-xs">
           <div>
@@ -458,7 +562,7 @@ export default function HostedZonesPage() {
         </form>
       </Modal>
 
-      {/* Modal: Edit Hosted Zone */}
+      {/* MODAL 2: Edit Hosted Zone */}
       <Modal isOpen={editModalOpen} onClose={() => setEditModalOpen(false)} title="Edit hosted zone">
         <form onSubmit={handleEditZone} className="space-y-4 text-xs">
           <div>
@@ -500,7 +604,7 @@ export default function HostedZonesPage() {
         </form>
       </Modal>
 
-      {/* Modal: Confirm Bulk Delete */}
+      {/* MODAL 3: Confirm Bulk Delete */}
       <Modal isOpen={deleteModalOpen} onClose={() => setDeleteModalOpen(false)} title="Delete hosted zone(s)">
         <div className="space-y-4 text-xs">
           <p className="text-gray-600 dark:text-gray-300">

@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import verify_password, get_password_hash, create_access_token, decode_access_token
 from app.models.models import User
@@ -9,7 +8,7 @@ from app.schemas.schemas import UserLogin, TokenResponse, UserOut
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> User:
+def get_current_user(token: str = Depends(oauth2_scheme), db=Depends(get_db)) -> User:
     if not token:
         # Default mock user if not authenticated for seamless demo, but valid session works
         user = db.query(User).filter(User.username == "aws-admin").first()
@@ -36,7 +35,7 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     return user
 
 @router.post("/login", response_model=TokenResponse)
-def login(login_data: UserLogin, db: Session = Depends(get_db)):
+def login(login_data: UserLogin, db=Depends(get_db)):
     user = db.query(User).filter(User.username == login_data.username).first()
     if not user:
         # Auto-create user for frictionless mock auth
